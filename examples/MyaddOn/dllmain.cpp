@@ -15,9 +15,12 @@ const int WIDTH = 640;
 const int HEIGHT = int(WIDTH * ratio);
 const int WIDTH_D = WIDTH * 2;
 
+#define MAX_BACKBUF_COUNT	3
 
 struct __declspec(uuid("2FA5FB3D-7873-4E67-9DDA-5D449DB2CB47")) TLSData
 {
+
+	reshade::api::resource_view selected_shader_resource[MAX_BACKBUF_COUNT] = {0};
 
 };
 
@@ -318,11 +321,23 @@ void register_swapchain_to_reshade()
 static void on_present(reshade::api::command_queue *, reshade::api::swapchain *swapChain, const reshade::api::rect *, const reshade::api::rect *, uint32_t, const reshade::api::rect *)
 {
 	ID3D12Device *device = nullptr;
-	reshade::api::device *d3d12_device = nullptr;
+	reshade::api::device *dev = nullptr;
 
-	d3d12_device = swapChain->get_device();
+	dev = swapChain->get_device();
 
-	ID3D12Device *dev = ((ID3D12Device *)d3d12_device->get_native());
+	TLSData& devData  = dev->get_private_data <TLSData>();
+
+	device = ((ID3D12Device *)dev->get_native());
+
+	uint32_t index = swapChain->get_current_back_buffer_index();
+
+	if (devData.selected_shader_resource[index] == NULL)
+	{
+		reshade::api::resource_view_desc  srv_desc(reshade::api::format::r8g8b8a8_unorm);
+		bool bRet = dev->create_resource_view(swapChain->get_back_buffer(index), reshade::api::resource_usage::shader_resource, srv_desc, &devData.selected_shader_resource[index]);
+
+		if (!bRet);
+	}
 
 
 	//1. set PSO
@@ -352,6 +367,13 @@ static void on_present(reshade::api::command_queue *, reshade::api::swapchain *s
 }
 
 
+static void on_destroy(reshade::api::device *device)
+{
+	device->destroy_private_data<TLSData>();
+}
+
+
+
 extern "C" __declspec(dllexport) const char *NAME = "SBS output";
 extern "C" __declspec(dllexport) const char *DESCRIPTION = "Duplicate SBS screen into double width buffer and output to glass.";
 
@@ -370,6 +392,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 
 		reshade::register_event<reshade::addon_event::init_device>(on_init);
 		reshade::register_event<reshade::addon_event::present>(on_present);
+		reshade::register_event<reshade::addon_event::destroy_device>(on_destroy);
+		
 		//reshade::register_overlay(nullptr, draw_settings);
 		break;
 	case DLL_PROCESS_DETACH:
