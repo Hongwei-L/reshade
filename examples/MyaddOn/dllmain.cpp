@@ -4,23 +4,35 @@
 #include <dxgi1_4.h>
 #include <windows.h>
 
+#include <wrl.h>			
+
 #pragma comment(lib, "dxgi.lib")
 
+#include "rendercommon.h"
+
+#include "Dx12Present.h"
+
+
+
+using namespace Microsoft::WRL;
 
 HINSTANCE g_hInstance;
 HWND g_hWnd = NULL;
 
-const float ratio = 0.75;
-const int WIDTH = 640;
-const int HEIGHT = int(WIDTH * ratio);
-const int WIDTH_D = WIDTH * 2;
 
-#define MAX_BACKBUF_COUNT	3
+const reshade::api::format  rsFormat = reshade::api::format::r8g8b8a8_unorm;
 
-struct __declspec(uuid("2FA5FB3D-7873-4E67-9DDA-5D449DB2CB47")) TLSData
+struct __declspec(uuid("2FA5FB3D-7873-4E67-9DDA-5D449DB2CB47")) SBSRenderData
 {
 
-	reshade::api::resource_view selected_shader_resource[MAX_BACKBUF_COUNT] = {0};
+	//Shader resource view for game render target, as need to render it into buffer
+	reshade::api::resource_view RTV_SRV[MAX_BACKBUF_COUNT] = {0};
+
+	reshade::api::resource_view RTV[MAX_BACKBUF_COUNT] = { 0 };
+
+	reshade::api::swapchain *pOurswapchain = {0};
+
+	Dx12Present	dx12Present;
 
 };
 
@@ -223,12 +235,56 @@ void on_init(reshade::api::device *device)
 		Sleep(10);
 
 	//创建私有数据
-	device->create_private_data<TLSData>();
+	device->create_private_data<SBSRenderData>();
 
-	create_swapchain(g_hWnd);
+	SBSRenderData &devData = device->get_private_data <SBSRenderData>();
+
+	//create_swapchain(g_hWnd);
+
+	ID3D12Device *d3d12_device = ((ID3D12Device *)g_device->get_native());
+
+	devData.dx12Present.init_resource(d3d12_device,g_hWnd);
 }
 
 static IDXGISwapChain3 *g_swapchain = nullptr;
+
+
+// Function to retrieve IDXGIFactory from ID3D12Device
+void GetDXGIFactoryFromD3D12Device(ID3D12Device *d3d12Device, IDXGIFactory4 **dxgiFactory)
+{
+	// Step 1: Query IDXGIAdapter from the ID3D12Device
+	ComPtr<IDXGIAdapter> dxgiAdapter;
+	LUID adapterLuid = d3d12Device->GetAdapterLuid(); // Get the adapter's LUID
+
+	// Use DXGI to enumerate the adapters and match the LUID
+	ComPtr<IDXGIFactory4> factory;
+	HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
+	if (FAILED(hr))
+	{
+		//throw std::runtime_error("Failed to create DXGIFactory.");
+	}
+
+	ComPtr<IDXGIAdapter> matchedAdapter;
+	for (UINT adapterIndex = 0; DXGI_ERROR_NOT_FOUND != factory->EnumAdapters(adapterIndex, &dxgiAdapter); ++adapterIndex)
+	{
+		DXGI_ADAPTER_DESC desc;
+		dxgiAdapter->GetDesc(&desc);
+
+		if (desc.AdapterLuid.LowPart == adapterLuid.LowPart && desc.AdapterLuid.HighPart == adapterLuid.HighPart)
+		{
+			matchedAdapter = dxgiAdapter;
+			break;
+		}
+	}
+
+	if (!matchedAdapter)
+	{
+		//throw std::runtime_error("Failed to match IDXGIAdapter for ID3D12Device.");
+	}
+
+	// Step 2: Return the factory
+	*dxgiFactory = factory.Detach();
+}
 
 int create_swapchain(HWND hwnd)
 {
@@ -254,13 +310,15 @@ int create_swapchain(HWND hwnd)
 	}
 
 	// Describe and create the command queue.
-	ID3D12CommandQueue *command_queue;
+	//ID3D12CommandQueue *command_queue;
+	ComPtr<ID3D12CommandQueue>			pIMainCmdQueue;
+
 	D3D12_COMMAND_QUEUE_DESC queue_desc = {};
 	queue_desc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
 	queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 
-	d3d12_device->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&command_queue));
-	if (command_queue == nullptr)
+	d3d12_device->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&pIMainCmdQueue));
+	if (pIMainCmdQueue == nullptr)
 	{
 		reshade::log::message(reshade::log::level::info, "Couldn't create command queue");
 		return -1;
@@ -268,29 +326,32 @@ int create_swapchain(HWND hwnd)
 
 	// 创建 DXGI 工厂
 	IDXGIFactory4 *dxgi_factory = nullptr;
-	CreateDXGIFactory1(__uuidof(IDXGIFactory4), reinterpret_cast<void **>(&dxgi_factory));
+	//CreateDXGIFactory1(__uuidof(IDXGIFactory4), reinterpret_cast<void **>(&dxgi_factory));
+
+	GetDXGIFactoryFromD3D12Device(d3d12_device, &dxgi_factory);
+
 
 	// 设置 SwapChain 描述
 	DXGI_SWAP_CHAIN_DESC1 swapchain_desc = {};
-	swapchain_desc.BufferCount = 2;
+	swapchain_desc.BufferCount = MAX_BACKBUF_COUNT;
 	swapchain_desc.Width = WIDTH_D; // 分辨率宽度
 	swapchain_desc.Height = HEIGHT; // 分辨率高度
-	swapchain_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // 颜色格式
+	swapchain_desc.Format = RTVFormat; // 颜色格式
 	swapchain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	swapchain_desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD; // DX12 推荐的交换效果
 	swapchain_desc.SampleDesc.Count = 1; // 无多重采样
 
+
 	// 创建 SwapChain
 	IDXGISwapChain1 *swapchain1 = nullptr;
 	hResult = dxgi_factory->CreateSwapChainForHwnd(
-		command_queue, // 必须使用命令队列
+		pIMainCmdQueue.Get(), // 必须使用命令队列
 		hwnd,
 		&swapchain_desc,
 		nullptr, // 可选：窗口全屏描述
 		nullptr, // 可选：输出限制
 		&swapchain1);
 
-	
 
 	// 升级为 IDXGISwapChain3 接口
 	swapchain1->QueryInterface(__uuidof(IDXGISwapChain3), reinterpret_cast<void **>(&g_swapchain));
@@ -325,26 +386,30 @@ static void on_present(reshade::api::command_queue *, reshade::api::swapchain *s
 
 	dev = swapChain->get_device();
 
-	TLSData& devData  = dev->get_private_data <TLSData>();
+	SBSRenderData& devData  = dev->get_private_data <SBSRenderData>();
 
 	device = ((ID3D12Device *)dev->get_native());
 
 	uint32_t index = swapChain->get_current_back_buffer_index();
 
-	if (devData.selected_shader_resource[index] == NULL)
+	if (devData.RTV_SRV[index] == NULL)
 	{
 		reshade::api::resource_view_desc  srv_desc(reshade::api::format::r8g8b8a8_unorm);
-		bool bRet = dev->create_resource_view(swapChain->get_back_buffer(index), reshade::api::resource_usage::shader_resource, srv_desc, &devData.selected_shader_resource[index]);
+		bool bRet = dev->create_resource_view(swapChain->get_back_buffer(index), reshade::api::resource_usage::shader_resource, srv_desc, &devData.RTV_SRV[index]);
 
-		if (!bRet);
+		if (!bRet)
+			reshade::log::message(reshade::log::level::info, "Couldn't create SRV for render target!");
+	}
+	else
+	{
+		//1. set PSO
+
+		//Set resource view
+
+		//Drawcall
 	}
 
 
-	//1. set PSO
-
-	//Set resource view
-
-	//Drawcall
 
 
 
@@ -369,7 +434,43 @@ static void on_present(reshade::api::command_queue *, reshade::api::swapchain *s
 
 static void on_destroy(reshade::api::device *device)
 {
-	device->destroy_private_data<TLSData>();
+	device->destroy_private_data<SBSRenderData>();
+}
+
+
+static void on_init_swapchain(reshade::api::swapchain *swapchain)
+{
+
+	reshade::api::device* dev = swapchain->get_device();
+
+	SBSRenderData &devData = dev->get_private_data <SBSRenderData>();
+
+	if (devData.pOurswapchain == NULL)
+	{
+		devData.pOurswapchain = (reshade::api::swapchain*)-1;
+		//create_swapchain(g_hWnd);
+	}
+
+
+	//This is the swap chain we created!
+	if (swapchain->get_hwnd() == g_hWnd)
+	{
+
+
+		devData.pOurswapchain = swapchain;
+
+		for (uint32_t i = 0; i < swapchain->get_back_buffer_count(); ++i)
+		{
+			reshade::api::resource bakbuf;
+			//save the render target view for each back buffer
+			bakbuf = swapchain->get_back_buffer(i);
+
+			reshade::api::resource_view_desc  rtv_desc(rsFormat);
+			bool bRet = dev->create_resource_view(bakbuf, reshade::api::resource_usage::present, rtv_desc, &devData.RTV[i]);
+
+			//devData.RTV[i]
+		}
+	}
 }
 
 
@@ -393,6 +494,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 		reshade::register_event<reshade::addon_event::init_device>(on_init);
 		reshade::register_event<reshade::addon_event::present>(on_present);
 		reshade::register_event<reshade::addon_event::destroy_device>(on_destroy);
+		reshade::register_event <reshade::addon_event::init_swapchain>(on_init_swapchain);
 		
 		//reshade::register_overlay(nullptr, draw_settings);
 		break;
