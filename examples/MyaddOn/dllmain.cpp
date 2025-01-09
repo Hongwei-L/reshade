@@ -409,6 +409,8 @@ static void on_present(reshade::api::command_queue *, reshade::api::swapchain *s
 		}
 
 		devData.dx12Present.CreateSRV_forGameRTV(device,(DXGI_FORMAT)desc.texture.format,numbackbuf , pbackbuf);
+
+		devData.gameSRVCreated = true;
 	}
 
 

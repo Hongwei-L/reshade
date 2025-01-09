@@ -56,14 +56,14 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 	//创建我们的离屏渲染目标
 
 	// 获取 Direct3D 12 设备和命令队列	
-	pID3D12Device4->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&pICmdAlloc));
+	THROW_IF_FAILED(pID3D12Device4->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&pICmdAlloc)));
 	if (pICmdAlloc == nullptr) {
 		reshade::log::message(reshade::log::level::info, "Couldn't ceate command allocator");
 		return false;
 	}
 
-	pID3D12Device4->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT
-				, pICmdAlloc.Get(), nullptr, IID_PPV_ARGS(&pICmdList));
+	THROW_IF_FAILED(pID3D12Device4->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT
+				, pICmdAlloc.Get(), nullptr, IID_PPV_ARGS(&pICmdList)));
 
 	// Describe and create the command queue.	
 	D3D12_COMMAND_QUEUE_DESC queue_desc = {};
@@ -431,16 +431,22 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 
 bool Dx12Present::on_present(int frameindex)
 {
+	HRESULT hResult;
+
 	UINT64 n64fence = 0;
 
-	THROW_IF_FAILED(pICmdAlloc->Reset());
+	hResult = pICmdList->Close();
+	hResult = pICmdAlloc->Reset();
 	THROW_IF_FAILED(pICmdList->Reset(pICmdAlloc.Get(), pIPSO_Quad.Get()));
 
 	//
 	//Framebuffer --> Quad
 
 
+	//设置RTV和DSV
 	D3D12_CPU_DESCRIPTOR_HANDLE stRTVHandle = pIDH_DBWRTV->GetCPUDescriptorHandleForHeapStart();
+	stRTVHandle.ptr += (frameindex * nRTVDescriptorSize);
+
 	D3D12_CPU_DESCRIPTOR_HANDLE stDSVHandle = pIDH_DBWDSV->GetCPUDescriptorHandleForHeapStart();
 
 	//设置渲染目标
@@ -515,7 +521,7 @@ void Dx12Present::CreateSRV_forGameRTV(ID3D12Device *pID3D12Device4, DXGI_FORMAT
 	stHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
 	//SRV堆
-	pID3D12Device4->CreateDescriptorHeap(&stHeapDesc, IID_PPV_ARGS(&pIDH_GameSRVHeap));
+	THROW_IF_FAILED(pID3D12Device4->CreateDescriptorHeap(&stHeapDesc, IID_PPV_ARGS(&pIDH_GameSRVHeap)));
 	//GRS_SET_D3D12_DEBUGNAME_COMPTR(pIDHQuad);
 
 	// 三个SRVs
