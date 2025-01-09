@@ -15,6 +15,7 @@
 #pragma comment(lib, "dxguid.lib")
 #pragma comment(lib, "d3d12.lib")
 
+const float							f4RTTexClearColor[] = { 0.8f, 0.8f, 0.8f, 0.0f };
 
 class CGRSCOMException
 {
@@ -37,20 +38,6 @@ bool Dx12Present::init_device(reshade::api::effect_runtime *runtime, reshade::ap
 
 	bool ret = true;
 
-	// See if we can get a command allocator from reshade
-	ID3D12Device *dev = ((ID3D12Device *)d3d12_device->get_native());
-	if (!dev) {
-		//reshade::log_message(reshade::log_level::info, "Couldn't get a device");
-		return false;
-	}
-
-	ID3D12CommandAllocator *command_allocator;
-	dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&command_allocator));
-	if (command_allocator == nullptr) {
-		//reshade::log_message(reshade::log_level::info, "Couldn't ceate command allocator");
-		return false;
-	}
-
 	return true;	
 
 }
@@ -61,59 +48,30 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 
 	HRESULT hResult;
 
-	DBWQuad.stViewPort = { 0.0f, 0.0f, static_cast<float>(WIDTH_D), static_cast<float>(HEIGHT), D3D12_MIN_DEPTH, D3D12_MAX_DEPTH };
-	DBWQuad.stScissorRect = { 0, 0, static_cast<LONG>(WIDTH_D), static_cast<LONG>(HEIGHT) };
+	stViewPort = { 0.0f, 0.0f, static_cast<float>(WIDTH_D), static_cast<float>(HEIGHT), D3D12_MIN_DEPTH, D3D12_MAX_DEPTH };
+	stScissorRect = { 0, 0, static_cast<LONG>(WIDTH_D), static_cast<LONG>(HEIGHT) };
 
-	//
-	//创建游戏Swapchain buffer的SRV，我们用它做纹理
-
-	D3D12_DESCRIPTOR_HEAP_DESC stHeapDesc = {};
-	stHeapDesc.NumDescriptors = MAX_BACKBUF_COUNT;
-	stHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-	stHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-
-	//SRV堆
-	pID3D12Device4->CreateDescriptorHeap(&stHeapDesc, IID_PPV_ARGS(&DBWQuad.pIDH_DBW_SwapChainHeap));
-	//GRS_SET_D3D12_DEBUGNAME_COMPTR(pIDHQuad);
-
-	// 三个SRVs
-	D3D12_SHADER_RESOURCE_VIEW_DESC stSRVDesc = {};
-	stSRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	stSRVDesc.Format = RTVFormat;
-	stSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-	stSRVDesc.Texture2D.MipLevels = 1;
-
-	D3D12_CPU_DESCRIPTOR_HANDLE stSRVHandle = DBWQuad.pIDH_DBW_SwapChainHeap->GetCPUDescriptorHandleForHeapStart();
-
-	//延迟到present时刻，因为游戏创建的RTV我们并不知道
-	/*
-	for (UINT i = 0; i < nFrameBackBufCount; i++)
-	{
-		pID3D12Device4->CreateShaderResourceView(pIARenderTargets[i].Get(), &stSRVDesc, stSRVHandle);
-		stSRVHandle.ptr += nSRVDescriptorSize;
-	}
-	*/
 
 	//
 	//创建我们的离屏渲染目标
 
 	// 获取 Direct3D 12 设备和命令队列	
-	pID3D12Device4->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&DBWQuad.pICmdAlloc));
-	if (DBWQuad.pICmdAlloc == nullptr) {
+	pID3D12Device4->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&pICmdAlloc));
+	if (pICmdAlloc == nullptr) {
 		reshade::log::message(reshade::log::level::info, "Couldn't ceate command allocator");
 		return false;
 	}
 
 	pID3D12Device4->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT
-				, DBWQuad.pICmdAlloc.Get(), nullptr, IID_PPV_ARGS(&DBWQuad.pICmdList));
+				, pICmdAlloc.Get(), nullptr, IID_PPV_ARGS(&pICmdList));
 
 	// Describe and create the command queue.	
 	D3D12_COMMAND_QUEUE_DESC queue_desc = {};
 	queue_desc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
 	queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 
-	pID3D12Device4->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&DBWQuad.pIMainCmdQueue));
-	if (DBWQuad.pIMainCmdQueue == nullptr)
+	pID3D12Device4->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&pIMainCmdQueue));
+	if (pIMainCmdQueue == nullptr)
 	{
 		reshade::log::message(reshade::log::level::info, "Couldn't create command queue");
 		return false;
@@ -140,7 +98,7 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 	// 创建 SwapChain
 	ComPtr<IDXGISwapChain1> swapchain1;
 	hResult = dxgi_factory->CreateSwapChainForHwnd(
-		DBWQuad.pIMainCmdQueue.Get(), // 必须使用命令队列
+		pIMainCmdQueue.Get(), // 必须使用命令队列
 		hWnd,
 		&swapchain_desc,
 		nullptr, // 可选：窗口全屏描述
@@ -148,16 +106,16 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 		&swapchain1);
 
 	// 升级为 IDXGISwapChain3 接口
-	swapchain1.As(&DBWQuad.pISwapChain3);
+	swapchain1.As(&pISwapChain3);
 	
 	// 禁用 ALT+ENTER 全屏切换
 	dxgi_factory->MakeWindowAssociation(hWnd, DXGI_MWA_NO_ALT_ENTER);
 
 
 	//得到每个描述符元素的大小
-	DBWQuad.nRTVDescriptorSize = pID3D12Device4->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-	DBWQuad.nSRVDescriptorSize = pID3D12Device4->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-	DBWQuad.nSampleDescriptorSize = pID3D12Device4->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+	nRTVDescriptorSize = pID3D12Device4->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+	nSRVDescriptorSize = pID3D12Device4->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	nSampleDescriptorSize = pID3D12Device4->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
 
 
 
@@ -167,15 +125,15 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 	stRTVHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 	stRTVHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 
-	pID3D12Device4->CreateDescriptorHeap(&stRTVHeapDesc, IID_PPV_ARGS(&DBWQuad.pIDH_DBWRTV));	
+	pID3D12Device4->CreateDescriptorHeap(&stRTVHeapDesc, IID_PPV_ARGS(&pIDH_DBWRTV));	
 
-	D3D12_CPU_DESCRIPTOR_HANDLE stRTVHandle = DBWQuad.pIDH_DBWRTV->GetCPUDescriptorHandleForHeapStart();
+	D3D12_CPU_DESCRIPTOR_HANDLE stRTVHandle = pIDH_DBWRTV->GetCPUDescriptorHandleForHeapStart();
 
 	for (UINT i = 0; i < MAX_BACKBUF_COUNT; i++)
 	{
-		DBWQuad.pISwapChain3->GetBuffer(i, IID_PPV_ARGS(&DBWQuad.pIARenderTargets[i]));
-		pID3D12Device4->CreateRenderTargetView(DBWQuad.pIARenderTargets[i].Get(), nullptr, stRTVHandle);
-		stRTVHandle.ptr += DBWQuad.nRTVDescriptorSize;
+		pISwapChain3->GetBuffer(i, IID_PPV_ARGS(&pIARenderTargets[i]));
+		pID3D12Device4->CreateRenderTargetView(pIARenderTargets[i].Get(), nullptr, stRTVHandle);
+		stRTVHandle.ptr += nRTVDescriptorSize;
 	}
 
 
@@ -236,7 +194,7 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 		, &stDSResDesc
 		, D3D12_RESOURCE_STATE_DEPTH_WRITE
 		, &stDepthOptimizedClearValue
-		, IID_PPV_ARGS(&DBWQuad.pIDSTex)
+		, IID_PPV_ARGS(&pIDSTex)
 	));
 
 	D3D12_DEPTH_STENCIL_VIEW_DESC stDepthStencilDesc = {};
@@ -248,11 +206,11 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 	dsvHeapDesc.NumDescriptors = 1;
 	dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
 	dsvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-	hResult = pID3D12Device4->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&DBWQuad.pIDH_DBWDSV));
+	hResult = pID3D12Device4->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&pIDH_DBWDSV));
 
-	pID3D12Device4->CreateDepthStencilView(DBWQuad.pIDSTex.Get()
+	pID3D12Device4->CreateDepthStencilView(pIDSTex.Get()
 		, &stDepthStencilDesc
-		, DBWQuad.pIDH_DBWDSV->GetCPUDescriptorHandleForHeapStart());
+		, pIDH_DBWDSV->GetCPUDescriptorHandleForHeapStart());
 
 
 	// 创建矩形框的顶点缓冲
@@ -269,7 +227,7 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 
 		UINT nQuadVBSize = sizeof(stTriangleVertices);
 		//SIZE_T								szMVPBuf = GRS_UPPER(sizeof(ST_GRS_MVP), 256);
-		UINT								nQuadVertexCnt = 0;
+		
 
 
 		nQuadVertexCnt = _countof(stTriangleVertices);
@@ -281,17 +239,17 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 			, &stBufferResSesc
 			, D3D12_RESOURCE_STATE_GENERIC_READ
 			, nullptr
-			, IID_PPV_ARGS(&DBWQuad.pIVB_DBWQuad)));
+			, IID_PPV_ARGS(&pIVB_Quad)));
 		
 		UINT8 *pVertexDataBegin = nullptr;
 		D3D12_RANGE stReadRange = { 0, 0 };		// We do not intend to read from this resource on the CPU.
-		DBWQuad.pIVB_DBWQuad->Map(0, &stReadRange, reinterpret_cast<void **>(&pVertexDataBegin));
+		pIVB_Quad->Map(0, &stReadRange, reinterpret_cast<void **>(&pVertexDataBegin));
 		memcpy(pVertexDataBegin, stTriangleVertices, sizeof(stTriangleVertices));
-		DBWQuad.pIVB_DBWQuad->Unmap(0, nullptr);
+		pIVB_Quad->Unmap(0, nullptr);
 
-		DBWQuad.stVBView.BufferLocation = DBWQuad.pIVB_DBWQuad->GetGPUVirtualAddress();
-		DBWQuad.stVBView.StrideInBytes = sizeof(ST_VERTEX_QUAD);
-		DBWQuad.stVBView.SizeInBytes = nQuadVBSize;
+		stVBView.BufferLocation = pIVB_Quad->GetGPUVirtualAddress();
+		stVBView.StrideInBytes = sizeof(ST_VERTEX_QUAD);
+		stVBView.SizeInBytes = nQuadVBSize;
 	}
 	// 创建DBW矩形框渲染用的SRV CBV Sample等
 	{
@@ -304,16 +262,21 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 			, &stBufferResSesc
 			, D3D12_RESOURCE_STATE_GENERIC_READ
 			, nullptr
-			, IID_PPV_ARGS(&DBWQuad.pICB_DBWMVO)));
+			, IID_PPV_ARGS(&pICB_DBWMVO)));
 
-		GRS_THROW_IF_FAILED(DBWQuad.pICB_DBWMVO->Map(0, nullptr, reinterpret_cast<void **>(&DBWQuad.pMOV)));
+		GRS_THROW_IF_FAILED(pICB_DBWMVO->Map(0, nullptr, reinterpret_cast<void **>(&pMOV)));
 		*/
+
+		D3D12_DESCRIPTOR_HEAP_DESC stHeapDesc = {};
+		stHeapDesc.NumDescriptors = 1;	
+		stHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+		stHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
 
 		//Sampler，采样器
 		stHeapDesc.NumDescriptors = 1;  //只有一个Sample
 		stHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
-		pID3D12Device4->CreateDescriptorHeap(&stHeapDesc, IID_PPV_ARGS(&DBWQuad.pIDH_DBWSampleQuad));
+		pID3D12Device4->CreateDescriptorHeap(&stHeapDesc, IID_PPV_ARGS(&pIDH_DBWSampleQuad));
 
 		// Sampler View
 		D3D12_SAMPLER_DESC stSamplerDesc = {};
@@ -327,7 +290,7 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 		stSamplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
 		stSamplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
 
-		pID3D12Device4->CreateSampler(&stSamplerDesc, DBWQuad.pIDH_DBWSampleQuad->GetCPUDescriptorHandleForHeapStart());
+		pID3D12Device4->CreateSampler(&stSamplerDesc, pIDH_DBWSampleQuad->GetCPUDescriptorHandleForHeapStart());
 	}
 
 
@@ -393,7 +356,7 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 		THROW_IF_FAILED(pID3D12Device4->CreateRootSignature(0
 			, pISignatureBlob->GetBufferPointer()
 			, pISignatureBlob->GetBufferSize()
-			, IID_PPV_ARGS(&DBWQuad.pIRSQuad)));
+			, IID_PPV_ARGS(&pIRSQuad)));
 
 		ComPtr<ID3DBlob> pIDBWBlobVertexShader;
 		ComPtr<ID3DBlob> pIDBWBlobPixelShader;
@@ -437,7 +400,7 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 		// 创建 graphics pipeline state object (PSO)对象
 		D3D12_GRAPHICS_PIPELINE_STATE_DESC stPSODesc = {};
 		stPSODesc.InputLayout = { stInputElementDescs, _countof(stInputElementDescs) };
-		stPSODesc.pRootSignature = DBWQuad.pIRSQuad.Get();
+		stPSODesc.pRootSignature = pIRSQuad.Get();
 		stPSODesc.VS.BytecodeLength = pIDBWBlobVertexShader->GetBufferSize();
 		stPSODesc.VS.pShaderBytecode = pIDBWBlobVertexShader->GetBufferPointer();
 		stPSODesc.PS.BytecodeLength = pIDBWBlobPixelShader->GetBufferSize();
@@ -459,6 +422,115 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 		stPSODesc.SampleDesc.Count = 1;
 
 		THROW_IF_FAILED(pID3D12Device4->CreateGraphicsPipelineState(&stPSODesc
-			, IID_PPV_ARGS(&DBWQuad.pIPSO_DWBQuad)));
+			, IID_PPV_ARGS(&pIPSO_Quad)));
 	}
+
+	return true;
+}
+
+
+bool Dx12Present::on_present(int frameindex)
+{
+	UINT64 n64fence = 0;
+
+	THROW_IF_FAILED(pICmdAlloc->Reset());
+	THROW_IF_FAILED(pICmdList->Reset(pICmdAlloc.Get(), pIPSO_Quad.Get()));
+
+	//
+	//Framebuffer --> Quad
+
+
+	D3D12_CPU_DESCRIPTOR_HANDLE stRTVHandle = pIDH_DBWRTV->GetCPUDescriptorHandleForHeapStart();
+	D3D12_CPU_DESCRIPTOR_HANDLE stDSVHandle = pIDH_DBWDSV->GetCPUDescriptorHandleForHeapStart();
+
+	//设置渲染目标
+	pICmdList->OMSetRenderTargets(1, &stRTVHandle, FALSE, &stDSVHandle);
+
+	pICmdList->RSSetViewports(1, &stViewPort);
+	pICmdList->RSSetScissorRects(1, &stScissorRect);
+
+	pICmdList->ClearRenderTargetView(stRTVHandle, f4RTTexClearColor, 0, nullptr);
+	pICmdList->ClearDepthStencilView(stDSVHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+
+	// 绘制矩形
+	pICmdList->SetGraphicsRootSignature(pIRSQuad.Get());  //复用
+	pICmdList->SetPipelineState(pIPSO_Quad.Get());
+
+
+	// 设置SRV、CBV和Sampler，跟矩形根签名以及创建的三种资源对应，通过GraphicRootDescriptorTable的槽位传递
+	// 
+	//指向三个堆，注意：SRV/CBV一次只能设置一个，所以分两次调用
+	ID3D12DescriptorHeap *ppHeapsQuad[] = { pIDH_GameSRVHeap.Get(),pIDH_DBWSampleQuad.Get() };
+	pICmdList->SetDescriptorHeaps(_countof(ppHeapsQuad), ppHeapsQuad);
+
+	//ID3D12DescriptorHeap *ppHeapsQuad2[] = { pIDH_Quad.Get() };
+	//pICmdList->SetDescriptorHeaps(_countof(ppHeapsQuad2), ppHeapsQuad2);
+
+	//偏移到当前framebuffer对应的HANDLE
+	D3D12_GPU_DESCRIPTOR_HANDLE stGPUCBVHandle(pIDH_GameSRVHeap->GetGPUDescriptorHandleForHeapStart());
+	stGPUCBVHandle.ptr += frameindex * nSRVDescriptorSize;
+
+	pICmdList->SetGraphicsRootDescriptorTable(0, stGPUCBVHandle);
+
+	//CBV
+	//stGPUCBVHandle = pIDH_Quad->GetGPUDescriptorHandleForHeapStart();
+	//stGPUCBVHandle.ptr += nSRVDescriptorSize;
+	//pICmdList->SetGraphicsRootDescriptorTable(1, stGPUCBVHandle);
+
+	//Sampler
+	pICmdList->SetGraphicsRootDescriptorTable(2, pIDH_DBWSampleQuad->GetGPUDescriptorHandleForHeapStart());
+
+	pICmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+	pICmdList->IASetVertexBuffers(0, 1, &stVBView);
+	//Draw Call！！！
+	pICmdList->DrawInstanced(nQuadVertexCnt, 1, 0, 0);
+
+	D3D12_RESOURCE_BARRIER stRTVStateTransBarrier = {};
+
+	stRTVStateTransBarrier.Transition.pResource = pIARenderTargets[frameindex].Get();
+	stRTVStateTransBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+	stRTVStateTransBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+	pICmdList->ResourceBarrier(1, &stRTVStateTransBarrier);
+
+	//关闭命令列表，去执行
+	THROW_IF_FAILED(pICmdList->Close());
+
+	ID3D12CommandList *ppCommandLists[] = { pICmdList.Get() };
+	pIMainCmdQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
+
+	THROW_IF_FAILED(pISwapChain3->Present(1, 0));
+
+}
+
+void Dx12Present::CreateSRV_forGameRTV(ID3D12Device *pID3D12Device4, DXGI_FORMAT format, int numRTV, ID3D12Resource *pResource[])
+{
+
+	//
+//创建游戏Swapchain buffer的SRV，我们用它做纹理
+
+	D3D12_DESCRIPTOR_HEAP_DESC stHeapDesc = {};
+	stHeapDesc.NumDescriptors = numRTV;	//TBD 应该动态获取!!!
+	stHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	stHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+	//SRV堆
+	pID3D12Device4->CreateDescriptorHeap(&stHeapDesc, IID_PPV_ARGS(&pIDH_GameSRVHeap));
+	//GRS_SET_D3D12_DEBUGNAME_COMPTR(pIDHQuad);
+
+	// 三个SRVs
+	D3D12_SHADER_RESOURCE_VIEW_DESC stSRVDesc = {};
+	stSRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	stSRVDesc.Format = format; 
+	stSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	stSRVDesc.Texture2D.MipLevels = 1;
+
+	D3D12_CPU_DESCRIPTOR_HANDLE stSRVHandle = pIDH_GameSRVHeap->GetCPUDescriptorHandleForHeapStart();
+
+	for (int i = 0; i < numRTV; i++)
+	{
+		pID3D12Device4->CreateShaderResourceView(pResource[i], &stSRVDesc, stSRVHandle);
+		stSRVHandle.ptr += nSRVDescriptorSize;
+	}
+
 }

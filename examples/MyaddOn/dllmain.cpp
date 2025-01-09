@@ -34,6 +34,8 @@ struct __declspec(uuid("2FA5FB3D-7873-4E67-9DDA-5D449DB2CB47")) SBSRenderData
 
 	Dx12Present	dx12Present;
 
+	bool	gameSRVCreated = { false };
+
 };
 
 
@@ -390,8 +392,31 @@ static void on_present(reshade::api::command_queue *, reshade::api::swapchain *s
 
 	device = ((ID3D12Device *)dev->get_native());
 
-	uint32_t index = swapChain->get_current_back_buffer_index();
+	if (!devData.gameSRVCreated)
+	{
+		reshade::api::resource_desc desc = dev->get_resource_desc(swapChain->get_current_back_buffer());
 
+		const int maxbackbuf = 5;
+		ID3D12Resource *pbackbuf[maxbackbuf];
+
+		int numbackbuf = swapChain->get_back_buffer_count();
+
+		for (int i = 0; i < numbackbuf; i++)
+		{
+			reshade::api::resource d3dres = swapChain->get_back_buffer(i);			
+			
+			pbackbuf[i] = (ID3D12Resource*)(d3dres.handle);
+		}
+
+		devData.dx12Present.CreateSRV_forGameRTV(device,(DXGI_FORMAT)desc.texture.format,numbackbuf , pbackbuf);
+	}
+
+
+	devData.dx12Present.on_present(swapChain->get_current_back_buffer_index());
+
+	//uint32_t index = swapChain->get_current_back_buffer_index();
+
+	/*
 	if (devData.RTV_SRV[index] == NULL)
 	{
 		reshade::api::resource_view_desc  srv_desc(reshade::api::format::r8g8b8a8_unorm);
@@ -401,6 +426,7 @@ static void on_present(reshade::api::command_queue *, reshade::api::swapchain *s
 			reshade::log::message(reshade::log::level::info, "Couldn't create SRV for render target!");
 	}
 	else
+	*/
 	{
 		//1. set PSO
 
