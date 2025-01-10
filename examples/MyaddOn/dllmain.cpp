@@ -438,7 +438,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 	case DLL_PROCESS_DETACH:
 		g_bExit = TRUE;
 
-		TerminateThread(hThread,-1);
+		//TerminateThread(hThread,-1);
 		reshade::unregister_addon(hModule);
 		break;
 	}
