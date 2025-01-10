@@ -88,7 +88,7 @@ private:
 	ST_GRS_CB_MVO *pMOV = nullptr;		//MVP矩阵的映射CPU地址，更新循环中可以直接往里复制
 
 	//我们需要把游戏Framebuffer作为纹理使用，需要描述符堆
-	ComPtr<ID3D12DescriptorHeap>				pIDH_GameSRVHeap;
+	ComPtr<ID3D12DescriptorHeap>		pIDH_GameSRVHeap;
 
 	ComPtr<ID3D12Resource>				pIAGameSRV[2*MAX_BACKBUF_COUNT];
 
@@ -117,23 +117,14 @@ public:
 
 	Dx12Present() = default;
 
-	/// \brief Initialized the SR weaver appropriate for the graphics API
-		/// \param runtime Represents the reshade effect runtime
-		/// \param rtv Represents the buffer that the weaver uses as a source to weave with
-		/// \param back_buffer Represents the current back buffer from ReShade
-		/// \return A bool representing if the weaver was initialized successfully
-	bool init_device(reshade::api::effect_runtime *runtime, reshade::api::resource rtv, reshade::api::resource back_buffer);
-
-	/// \brief Creates and reset the effect copy resource so it is similar to the back buffer resource, then use it as weaver input.
-	/// \param effect_resource_desc ReShade resource representing the currently selected back buffer description
-	/// \return A bool respresenting if the effect frame copy was successful
-	//bool create_swapchain(const reshade::api::resource_desc &effect_resource_desc);
-
-	bool init_resource(ID3D12Device*				pID3D12Device4, HWND hWnd);
+	/// brief Initialized the SR weaver appropriate for the graphics API
+	bool init_resource(ID3D12Device* pID3D12Device4, HWND hWnd);
 
 	bool on_present(int frameindex);
 
 	void CreateSRV_forGameRTV(ID3D12Device *pID3D12Device4, DXGI_FORMAT format, int numRTV, ID3D12Resource *pResource[]);
+
+	void  uninit_resource();
 
 };
 

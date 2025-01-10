@@ -3,18 +3,15 @@
 #include <d3d12.h>
 #include <dxgi1_4.h>
 #include <windows.h>
-
 #include <wrl.h>			
+
+#include "rendercommon.h"
+#include "Dx12Present.h"
 
 #pragma comment(lib, "dxgi.lib")
 
-#include "rendercommon.h"
-
-#include "Dx12Present.h"
-
-
-
 using namespace Microsoft::WRL;
+
 
 HINSTANCE g_hInstance;
 HWND g_hWnd = NULL;
@@ -370,6 +367,9 @@ static void on_present(reshade::api::command_queue *queue, reshade::api::swapcha
 
 static void on_destroy(reshade::api::device *device)
 {
+	SBSRenderData &devData = device->get_private_data <SBSRenderData>();
+	devData.dx12Present.uninit_resource();
+
 	device->destroy_private_data<SBSRenderData>();
 }
 
@@ -386,7 +386,6 @@ static void on_init_swapchain(reshade::api::swapchain *swapchain)
 		devData.pOurswapchain = (reshade::api::swapchain*)-1;
 		//create_swapchain(g_hWnd);
 	}
-
 
 	//This is the swap chain we created!
 	if (swapchain->get_hwnd() == g_hWnd)
@@ -414,6 +413,8 @@ static void on_init_swapchain(reshade::api::swapchain *swapchain)
 extern "C" __declspec(dllexport) const char *NAME = "SBS output";
 extern "C" __declspec(dllexport) const char *DESCRIPTION = "Duplicate SBS screen into double width buffer and output to glass.";
 
+HANDLE hThread = 0;
+
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 {
 	switch (fdwReason)
@@ -422,7 +423,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 
 		g_hInstance = hModule;
 
-		CreateThread(NULL, 0, WindowThreadProc, NULL, 0, NULL);
+		hThread = CreateThread(NULL, 0, WindowThreadProc, NULL, 0, NULL);
 
 		if (!reshade::register_addon(hModule))
 			return FALSE;
@@ -436,6 +437,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 		break;
 	case DLL_PROCESS_DETACH:
 		g_bExit = TRUE;
+
+		TerminateThread(hThread,-1);
 		reshade::unregister_addon(hModule);
 		break;
 	}

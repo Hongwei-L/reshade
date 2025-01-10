@@ -16,7 +16,6 @@
 #pragma comment(lib, "d3d12.lib")
 
 float							f4RTTexClearColor[] = { 0.2f, 0.2f, 0.0f, 0.0f };
-float colorratio = 0.1;
 
 class CGRSCOMException
 {
@@ -33,15 +32,6 @@ private:
 };
 
 #define THROW_IF_FAILED(hr) {HRESULT _hr = (hr);if (FAILED(_hr)){ throw CGRSCOMException(_hr); }}
-
-bool Dx12Present::init_device(reshade::api::effect_runtime *runtime, reshade::api::resource rtv, reshade::api::resource back_buffer)
-{
-
-	bool ret = true;
-
-	return true;	
-
-}
 
 
 bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
@@ -460,6 +450,27 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 }
 
 
+void  Dx12Present::uninit_resource()
+{
+
+	UINT64 n64fence = 0;
+
+	n64fence = n64FenceValue;
+	THROW_IF_FAILED(pIMainCmdQueue->Signal(pIFence.Get(), n64fence));
+	n64FenceValue++;
+
+	if (pIFence->GetCompletedValue() < n64fence)
+	{
+		THROW_IF_FAILED(pIFence->SetEventOnCompletion(n64fence, hEventFence));
+		WaitForSingleObject(hEventFence, INFINITE);
+	}
+
+	HRESULT hResult = pICmdAlloc->Reset();
+	THROW_IF_FAILED(pICmdList->Reset(pICmdAlloc.Get(), pIPSO_Quad.Get()));
+
+}
+
+
 bool Dx12Present::on_present(int frameindex)
 {
 	HRESULT hResult;
@@ -514,9 +525,9 @@ bool Dx12Present::on_present(int frameindex)
 	pICmdList->RSSetViewports(1, &stViewPort);
 	pICmdList->RSSetScissorRects(1, &stScissorRect);
 	
-	f4RTTexClearColor[0] += 0.0001;
-	f4RTTexClearColor[1] += 0.0002;
-	f4RTTexClearColor[2] += 0.003;
+	//f4RTTexClearColor[0] += 0.0001;
+	//f4RTTexClearColor[1] += 0.0002;
+	//f4RTTexClearColor[2] += 0.003;
 	
 
 	pICmdList->ClearRenderTargetView(stRTVHandle, f4RTTexClearColor, 0, nullptr);
@@ -578,6 +589,7 @@ bool Dx12Present::on_present(int frameindex)
 
 	THROW_IF_FAILED(pISwapChain3->Present(1, 0));
 
+	return true;
 }
 
 void Dx12Present::CreateSRV_forGameRTV(ID3D12Device *pID3D12Device4, DXGI_FORMAT format, int numRTV, ID3D12Resource *pResource[])
@@ -614,13 +626,14 @@ void Dx12Present::CreateSRV_forGameRTV(ID3D12Device *pID3D12Device4, DXGI_FORMAT
 
 }
 
+/*
 #include <wrl.h>
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"  // 图像加载库
 
 using Microsoft::WRL::ComPtr;
 
-/*
+
 reshade::api::resource LoadTextureFromFile(reshade::api::device *device, reshade::api::command_queue *command_queue, const char *file_path)
 {
 	// 1. 使用 stb_image 加载图像数据
@@ -696,79 +709,4 @@ reshade::api::resource LoadTextureFromFile(reshade::api::device *device, reshade
 	// 8. 返回创建的纹理资源
 	return texture;
 }
-
-reshade::api::resource LoadTextureFromFile(reshade::api::device *device, reshade::api::command_list *cmd_list, const char *file_path)
-{
-	// 1. 加载图像数据
-	int width, height, channels;
-	unsigned char *imageData = stbi_load(file_path, &width, &height, &channels, STBI_rgb_alpha);
-	if (!imageData)
-	{
-		throw std::runtime_error("Failed to load image.");
-	}
-
-	// 计算纹理大小（每像素4字节：RGBA）
-	size_t imageSize = width * height * 4;
-
-	// 2. 创建 GPU 纹理资源
-	reshade::api::resource_desc texture_desc = {};
-	texture_desc.type = reshade::api::resource_type::texture_2d;
-	texture_desc.texture.width = static_cast<uint32_t>(width);
-	texture_desc.texture.height = static_cast<uint32_t>(height);
-	texture_desc.texture.depth_or_layers = 1;
-	texture_desc.texture.levels = 1;
-	texture_desc.texture.format = reshade::api::format::r8g8b8a8_unorm;
-	texture_desc.heap = reshade::api::memory_heap::gpu_only;
-	texture_desc.usage = reshade::api::resource_usage::shader_resource;
-
-	reshade::api::resource texture;
-	if (!device->create_resource(texture_desc, nullptr, reshade::api::resource_usage::copy_dest | reshade::api::resource_usage::shader_resource, &texture))
-	{
-		stbi_image_free(imageData);
-		throw std::runtime_error("Failed to create GPU texture.");
-	}
-
-	// 3. 创建临时缓冲区用于上传数据
-	reshade::api::resource_desc upload_desc = {};
-	upload_desc.type = reshade::api::resource_type::buffer;
-	upload_desc.buffer.size = imageSize;
-	upload_desc.heap = reshade::api::memory_heap::cpu_to_gpu;
-	upload_desc.usage = reshade::api::resource_usage::upload;
-
-	reshade::api::resource upload_buffer;
-	if (!device->create_resource(upload_desc, nullptr, reshade::api::resource_usage::upload, &upload_buffer))
-	{
-		device->destroy_resource(texture);
-		stbi_image_free(imageData);
-		throw std::runtime_error("Failed to create upload buffer.");
-	}
-
-	// 4. 将数据拷贝到 upload buffer
-	uint8_t *mapped_data = nullptr;
-	if (!device->map_texture_region(upload_buffer, 0, nullptr, (void **)&mapped_data, 0, 0))
-	{
-		device->destroy_resource(texture);
-		device->destroy_resource(upload_buffer);
-		stbi_image_free(imageData);
-		throw std::runtime_error("Failed to map upload buffer.");
-	}
-
-	memcpy(mapped_data, imageData, imageSize);
-	device->unmap_texture_region(upload_buffer, 0);
-
-	// 5. 将 upload buffer 的数据复制到 GPU 纹理
-	reshade::api::subresource_box region = { 0, 0, 0, static_cast<int32_t>(width), static_cast<int32_t>(height), 1 };
-	cmd_list->copy_texture_region(texture, 0, 0, 0, 0, upload_buffer, 0, &region);
-
-	// 设置纹理的最终用途为 Shader Resource
-	cmd_list->transition_resource(texture, reshade::api::resource_usage::copy_dest, reshade::api::resource_usage::shader_resource);
-
-	// 6. 清理
-	device->destroy_resource(upload_buffer);
-	stbi_image_free(imageData);
-
-	// 7. 返回 GPU 纹理资源
-	return texture;
-}
-
 */
