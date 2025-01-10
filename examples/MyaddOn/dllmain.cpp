@@ -15,12 +15,12 @@ using namespace Microsoft::WRL;
 
 HINSTANCE g_hInstance;
 HWND g_hWnd = NULL;
-
 BOOL g_bExit = FALSE;
-
 
 const reshade::api::format  rsFormat = reshade::api::format::r8g8b8a8_unorm;
 
+//
+// The data across different callback. Reshade provide this to avoid global variable and thread safe
 struct __declspec(uuid("2FA5FB3D-7873-4E67-9DDA-5D449DB2CB47")) SBSRenderData
 {
 
@@ -99,7 +99,7 @@ HWND CreateWindowInDLL()
 	return g_hWnd;
 }
 
-DWORD WINAPI WindowThreadProc(LPVOID lpParam)
+DWORD WINAPI WindowThread(LPVOID lpParam)
 {
 	// 创建窗口
 	HWND hwnd = CreateWindowInDLL();
@@ -116,34 +116,157 @@ DWORD WINAPI WindowThreadProc(LPVOID lpParam)
 }
 
 
-
-
-
-int create_swapchain(HWND hwnd);
-
-static reshade::api::device *g_device = nullptr;
-
 void on_init(reshade::api::device *device)
-{
-	g_device = device;
+{	
 
-	while (g_hWnd == NULL)	
+	//窗口在线程创建的，等待它创建完
+	while (g_hWnd == NULL)
 		Sleep(10);
 
 	//创建私有数据
 	device->create_private_data<SBSRenderData>();
-
 	SBSRenderData &devData = device->get_private_data <SBSRenderData>();
 
-	//create_swapchain(g_hWnd);
 
-	ID3D12Device *d3d12_device = ((ID3D12Device *)g_device->get_native());
+	ID3D12Device *d3d12_device = ((ID3D12Device *)device->get_native());
 
 	devData.dx12Present.init_resource(d3d12_device,g_hWnd);
 }
 
-static IDXGISwapChain3 *g_swapchain = nullptr;
+static void on_present(reshade::api::command_queue *queue, reshade::api::swapchain *swapChain, const reshade::api::rect *, const reshade::api::rect *, uint32_t, const reshade::api::rect *)
+{
+	ID3D12Device *device = nullptr;
+	reshade::api::device *dev = nullptr;
 
+	dev = swapChain->get_device();
+
+	SBSRenderData& devData  = dev->get_private_data <SBSRenderData>();
+
+	device = ((ID3D12Device *)dev->get_native());
+
+	if (!devData.gameSRVCreated)
+	{
+		reshade::api::resource_desc desc = dev->get_resource_desc(swapChain->get_current_back_buffer());
+
+		const int maxbackbuf = 5;
+		ID3D12Resource *pbackbuf[maxbackbuf];
+
+		int numbackbuf = swapChain->get_back_buffer_count();
+
+		for (int i = 0; i < numbackbuf; i++)
+		{
+			reshade::api::resource d3dres = swapChain->get_back_buffer(i);			
+			
+			pbackbuf[i] = (ID3D12Resource*)(d3dres.handle);
+		}
+
+		devData.dx12Present.CreateSRV_forGameRTV(device,(DXGI_FORMAT)desc.texture.format,numbackbuf , pbackbuf);
+
+		devData.gameSRVCreated = true;
+	}
+
+
+	reshade::api::command_list *cmd_list = queue->get_immediate_command_list();
+	const reshade::api::resource back_buffer = swapChain->get_current_back_buffer();
+
+	cmd_list->barrier(back_buffer, reshade::api::resource_usage::present, reshade::api::resource_usage::shader_resource_pixel| reshade::api::resource_usage::shader_resource);
+	
+	queue->flush_immediate_command_list();
+
+	//queue->wait_idle();
+
+	devData.dx12Present.on_present(swapChain->get_current_back_buffer_index());
+
+	cmd_list->barrier(back_buffer, reshade::api::resource_usage::shader_resource_pixel | reshade::api::resource_usage::shader_resource, reshade::api::resource_usage::present);
+
+}
+
+
+static void on_destroy(reshade::api::device *device)
+{
+	SBSRenderData &devData = device->get_private_data <SBSRenderData>();
+	devData.dx12Present.uninit_resource();
+
+	device->destroy_private_data<SBSRenderData>();
+}
+
+
+static void on_init_swapchain(reshade::api::swapchain *swapchain)
+{
+
+	reshade::api::device* dev = swapchain->get_device();
+
+	SBSRenderData &devData = dev->get_private_data <SBSRenderData>();
+
+	if (devData.pOurswapchain == NULL)
+	{
+		devData.pOurswapchain = (reshade::api::swapchain*)-1;
+		//create_swapchain(g_hWnd);
+	}
+
+	//This is the swap chain we created!
+	if (swapchain->get_hwnd() == g_hWnd)
+	{
+
+
+		devData.pOurswapchain = swapchain;
+
+		for (uint32_t i = 0; i < swapchain->get_back_buffer_count(); ++i)
+		{
+			reshade::api::resource bakbuf;
+			//save the render target view for each back buffer
+			bakbuf = swapchain->get_back_buffer(i);
+
+			reshade::api::resource_view_desc  rtv_desc(rsFormat);
+			bool bRet = dev->create_resource_view(bakbuf, reshade::api::resource_usage::present, rtv_desc, &devData.RTV[i]);
+
+			//devData.RTV[i]
+		}
+	}
+}
+
+
+
+extern "C" __declspec(dllexport) const char *NAME = "SBS output";
+extern "C" __declspec(dllexport) const char *DESCRIPTION = "Duplicate SBS screen into double width buffer and output to glass.";
+
+HANDLE hThread = 0;
+
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
+{
+	switch (fdwReason)
+	{
+	case DLL_PROCESS_ATTACH:
+
+		g_hInstance = hModule;
+
+		hThread = CreateThread(NULL, 0, WindowThread, NULL, 0, NULL);
+
+		if (!reshade::register_addon(hModule))
+			return FALSE;
+
+		reshade::register_event<reshade::addon_event::init_device>(on_init);
+		reshade::register_event<reshade::addon_event::present>(on_present);
+		reshade::register_event<reshade::addon_event::destroy_device>(on_destroy);
+		reshade::register_event <reshade::addon_event::init_swapchain>(on_init_swapchain);		
+		
+		break;
+
+	case DLL_PROCESS_DETACH:
+		g_bExit = TRUE;
+
+		//TerminateThread(hThread,-1);
+		reshade::unregister_addon(hModule);
+		break;
+	}
+
+	return TRUE;
+}
+
+
+/*
+
+static IDXGISwapChain3 *g_swapchain = nullptr;
 
 // Function to retrieve IDXGIFactory from ID3D12Device
 void GetDXGIFactoryFromD3D12Device(ID3D12Device *d3d12Device, IDXGIFactory4 **dxgiFactory)
@@ -190,13 +313,13 @@ int create_swapchain(HWND hwnd)
 	if (g_device == nullptr)
 		return -1;
 
-	// 获取 Direct3D 12 设备和命令队列	
+	// 获取 Direct3D 12 设备和命令队列
 
 	ID3D12Device *d3d12_device = ((ID3D12Device *)g_device->get_native());
 	if (!d3d12_device) {
 		reshade::log::message(reshade::log::level::info, "Couldn't get a device");
 		return -1;
-	}	
+	}
 
 	ID3D12CommandAllocator *command_allocator;
 	d3d12_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&command_allocator));
@@ -261,187 +384,5 @@ int create_swapchain(HWND hwnd)
 
 	return 0;
 }
+*/
 
-
-void register_swapchain_to_reshade()
-{
-	if (g_swapchain != nullptr && g_device != nullptr)
-	{
-		//reshade::api::swapchain_desc desc = {};
-		//desc.type = reshade::api::swapchain_type::d3d12_swapchain;
-		//desc.native_handle = g_swapchain;
-
-		//reshade::register_swapchain(g_swapchain, desc);
-	}
-}
-
-static void on_present(reshade::api::command_queue *queue, reshade::api::swapchain *swapChain, const reshade::api::rect *, const reshade::api::rect *, uint32_t, const reshade::api::rect *)
-{
-	ID3D12Device *device = nullptr;
-	reshade::api::device *dev = nullptr;
-
-	dev = swapChain->get_device();
-
-	SBSRenderData& devData  = dev->get_private_data <SBSRenderData>();
-
-	device = ((ID3D12Device *)dev->get_native());
-
-	if (!devData.gameSRVCreated)
-	{
-		reshade::api::resource_desc desc = dev->get_resource_desc(swapChain->get_current_back_buffer());
-
-		const int maxbackbuf = 5;
-		ID3D12Resource *pbackbuf[maxbackbuf];
-
-		int numbackbuf = swapChain->get_back_buffer_count();
-
-		for (int i = 0; i < numbackbuf; i++)
-		{
-			reshade::api::resource d3dres = swapChain->get_back_buffer(i);			
-			
-			pbackbuf[i] = (ID3D12Resource*)(d3dres.handle);
-		}
-
-		devData.dx12Present.CreateSRV_forGameRTV(device,(DXGI_FORMAT)desc.texture.format,numbackbuf , pbackbuf);
-
-		devData.gameSRVCreated = true;
-	}
-
-
-	reshade::api::command_list *cmd_list = queue->get_immediate_command_list();
-	const reshade::api::resource back_buffer = swapChain->get_current_back_buffer();
-
-	cmd_list->barrier(back_buffer, reshade::api::resource_usage::present, reshade::api::resource_usage::shader_resource_pixel| reshade::api::resource_usage::shader_resource);
-	
-	queue->flush_immediate_command_list();
-
-	//queue->wait_idle();
-
-	devData.dx12Present.on_present(swapChain->get_current_back_buffer_index());
-
-	cmd_list->barrier(back_buffer, reshade::api::resource_usage::shader_resource_pixel | reshade::api::resource_usage::shader_resource, reshade::api::resource_usage::present);
-
-	//uint32_t index = swapChain->get_current_back_buffer_index();
-
-	/*
-	if (devData.RTV_SRV[index] == NULL)
-	{
-		reshade::api::resource_view_desc  srv_desc(reshade::api::format::r8g8b8a8_unorm);
-		bool bRet = dev->create_resource_view(swapChain->get_back_buffer(index), reshade::api::resource_usage::shader_resource, srv_desc, &devData.RTV_SRV[index]);
-
-		if (!bRet)
-			reshade::log::message(reshade::log::level::info, "Couldn't create SRV for render target!");
-	}
-	else
-	*/
-	{
-		//1. set PSO
-
-		//Set resource view
-
-		//Drawcall
-	}
-
-
-
-
-
-	/*
-	// 创建渲染目标视图(RTV)
-	D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
-	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-	rtvHeapDesc.NumDescriptors = 1;
-	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-	g_device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&g_rtvHeap));
-
-	// 获取交换链的后台缓冲
-	g_swapChain->GetBuffer(0, IID_PPV_ARGS(&g_backBuffer));
-
-	// 创建渲染目标视图
-	g_device->CreateRenderTargetView(g_backBuffer, nullptr, g_rtvHeap->GetCPUDescriptorHandleForHeapStart());
-	}*/
-
-
-}
-
-
-static void on_destroy(reshade::api::device *device)
-{
-	SBSRenderData &devData = device->get_private_data <SBSRenderData>();
-	devData.dx12Present.uninit_resource();
-
-	device->destroy_private_data<SBSRenderData>();
-}
-
-
-static void on_init_swapchain(reshade::api::swapchain *swapchain)
-{
-
-	reshade::api::device* dev = swapchain->get_device();
-
-	SBSRenderData &devData = dev->get_private_data <SBSRenderData>();
-
-	if (devData.pOurswapchain == NULL)
-	{
-		devData.pOurswapchain = (reshade::api::swapchain*)-1;
-		//create_swapchain(g_hWnd);
-	}
-
-	//This is the swap chain we created!
-	if (swapchain->get_hwnd() == g_hWnd)
-	{
-
-
-		devData.pOurswapchain = swapchain;
-
-		for (uint32_t i = 0; i < swapchain->get_back_buffer_count(); ++i)
-		{
-			reshade::api::resource bakbuf;
-			//save the render target view for each back buffer
-			bakbuf = swapchain->get_back_buffer(i);
-
-			reshade::api::resource_view_desc  rtv_desc(rsFormat);
-			bool bRet = dev->create_resource_view(bakbuf, reshade::api::resource_usage::present, rtv_desc, &devData.RTV[i]);
-
-			//devData.RTV[i]
-		}
-	}
-}
-
-
-
-extern "C" __declspec(dllexport) const char *NAME = "SBS output";
-extern "C" __declspec(dllexport) const char *DESCRIPTION = "Duplicate SBS screen into double width buffer and output to glass.";
-
-HANDLE hThread = 0;
-
-BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
-{
-	switch (fdwReason)
-	{
-	case DLL_PROCESS_ATTACH:
-
-		g_hInstance = hModule;
-
-		hThread = CreateThread(NULL, 0, WindowThreadProc, NULL, 0, NULL);
-
-		if (!reshade::register_addon(hModule))
-			return FALSE;
-
-		reshade::register_event<reshade::addon_event::init_device>(on_init);
-		reshade::register_event<reshade::addon_event::present>(on_present);
-		reshade::register_event<reshade::addon_event::destroy_device>(on_destroy);
-		reshade::register_event <reshade::addon_event::init_swapchain>(on_init_swapchain);
-		
-		//reshade::register_overlay(nullptr, draw_settings);
-		break;
-	case DLL_PROCESS_DETACH:
-		g_bExit = TRUE;
-
-		//TerminateThread(hThread,-1);
-		reshade::unregister_addon(hModule);
-		break;
-	}
-
-	return TRUE;
-}
