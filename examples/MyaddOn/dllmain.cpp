@@ -19,6 +19,8 @@ using namespace Microsoft::WRL;
 HINSTANCE g_hInstance;
 HWND g_hWnd = NULL;
 
+BOOL g_bExit = FALSE;
+
 
 const reshade::api::format  rsFormat = reshade::api::format::r8g8b8a8_unorm;
 
@@ -107,7 +109,7 @@ DWORD WINAPI WindowThreadProc(LPVOID lpParam)
 
 	// 启动消息循环
 	MSG msg;
-	while (GetMessage(&msg, hwnd, 0, 0))
+	while (!g_bExit && GetMessage(&msg, hwnd, 0, 0))
 	{
 		TranslateMessage(&msg);
 		DispatchMessage(&msg);
@@ -313,8 +315,10 @@ static void on_present(reshade::api::command_queue *queue, reshade::api::swapcha
 	const reshade::api::resource back_buffer = swapChain->get_current_back_buffer();
 
 	cmd_list->barrier(back_buffer, reshade::api::resource_usage::present, reshade::api::resource_usage::shader_resource_pixel| reshade::api::resource_usage::shader_resource);
+	
+	queue->flush_immediate_command_list();
 
-	queue->wait_idle();
+	//queue->wait_idle();
 
 	devData.dx12Present.on_present(swapChain->get_current_back_buffer_index());
 
@@ -431,6 +435,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 		//reshade::register_overlay(nullptr, draw_settings);
 		break;
 	case DLL_PROCESS_DETACH:
+		g_bExit = TRUE;
 		reshade::unregister_addon(hModule);
 		break;
 	}

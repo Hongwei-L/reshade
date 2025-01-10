@@ -118,7 +118,7 @@
       <ConformanceMode>false</ConformanceMode>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>..\..\include;..\..\deps\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\include;..\..\deps\imgui;..\..\deps\fpng\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -128,7 +128,8 @@
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
     <PostBuildEvent>
-      <Command>copy $(OutDir)$(TargetName)$(TargetExt)  C:\SD\GBRdx12\Hongwei-GDR\Debug\x64\myaddon.addon64</Command>
+      <Command>copy $(OutDir)$(TargetName)$(TargetExt)  C:\SD\GBRdx12\Hongwei-GDR\Debug\x64\myaddon.addon64
+copy C:\SD\reshade_hw\reshade\examples\MyaddOn\Shader\sbsexpand.hlsl  C:\SD\GBRdx12\Hongwei-GDR\Debug\x64\sbsexpand.hlsl</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -141,7 +142,7 @@
       <ConformanceMode>false</ConformanceMode>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>..\..\include;..\..\deps\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\include;..\..\deps\imgui;..\..\deps\fpng\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -152,7 +153,8 @@
       <EnableUAC>false</EnableUAC>
     </Link>
     <PostBuildEvent>
-      <Command>copy $(OutDir)$(TargetName)$(TargetExt)  C:\SD\GBRdx12\Hongwei-GDR\Debug\x64\myaddon.addon64</Command>
+      <Command>copy $(OutDir)$(TargetName)$(TargetExt)  C:\SD\GBRdx12\Hongwei-GDR\Debug\x64\myaddon.addon64
+copy C:\SD\reshade_hw\reshade\examples\MyaddOn\Shader\sbsexpand.hlsl  C:\SD\GBRdx12\Hongwei-GDR\Debug\x64\sbsexpand.hlsl</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
