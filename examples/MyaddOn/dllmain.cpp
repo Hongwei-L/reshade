@@ -119,111 +119,6 @@ DWORD WINAPI WindowThreadProc(LPVOID lpParam)
 
 
 
-/*
-// 插件初始化函数
-void InitializeSwapChain() {
-	// 获取 ReShade 的设备上下文
-	g_device = reinterpret_cast<ID3D12Device *>(reshade::api::device());
-	g_commandQueue = reinterpret_cast<ID3D12CommandQueue *>(reshade::api::context());
-
-	// 获取 DXGI Factory
-	CreateDXGIFactory1(IID_PPV_ARGS(&g_dxgiFactory));
-
-	// 创建交换链描述
-	DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
-	swapChainDesc.Width = 1920;    // 目标显示器的宽度
-	swapChainDesc.Height = 1080;   // 目标显示器的高度
-	swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	swapChainDesc.Stereo = FALSE;
-	swapChainDesc.SampleDesc.Count = 1;
-	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-	swapChainDesc.BufferCount = 2;  // 双缓冲
-	swapChainDesc.Scaling = DXGI_SCALING_STRETCH;
-	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-	swapChainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
-	swapChainDesc.Flags = 0;
-
-	// 获取第二显示器的窗口句柄
-	g_windowHandle = GetOtherWindowHandle();
-
-	// 创建交换链
-	IDXGISwapChain1 *swapChain1 = nullptr;
-	g_dxgiFactory->CreateSwapChainForHwnd(g_commandQueue, g_windowHandle, &swapChainDesc, nullptr, nullptr, &swapChain1);
-	swapChain1->QueryInterface(IID_PPV_ARGS(&g_swapChain));
-
-	// 创建渲染目标视图(RTV)
-	D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
-	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-	rtvHeapDesc.NumDescriptors = 1;
-	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-	g_device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&g_rtvHeap));
-
-	// 获取交换链的后台缓冲
-	g_swapChain->GetBuffer(0, IID_PPV_ARGS(&g_backBuffer));
-
-	// 创建渲染目标视图
-	g_device->CreateRenderTargetView(g_backBuffer, nullptr, g_rtvHeap->GetCPUDescriptorHandleForHeapStart());
-}
-
-// 渲染到新的交换链
-void RenderToSwapChain() {
-	// 在新的交换链上渲染
-	ID3D12GraphicsCommandList *commandList = nullptr;
-	g_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, nullptr, nullptr, IID_PPV_ARGS(&commandList));
-
-	// 设置渲染目标
-	commandList->OMSetRenderTargets(1, &g_rtvHeap->GetCPUDescriptorHandleForHeapStart(), FALSE, nullptr);
-
-	// 清除背景
-	commandList->ClearRenderTargetView(g_rtvHeap->GetCPUDescriptorHandleForHeapStart(), { 0.0f, 0.0f, 0.0f, 1.0f }, 0, nullptr);
-
-	// 提交渲染命令
-	commandList->Close();
-	ID3D12CommandQueue *commandQueue = nullptr;
-	g_device->GetCommandQueue(0, IID_PPV_ARGS(&commandQueue));
-	commandQueue->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList *const *>(&commandList));
-
-	// Present到新的交换链
-	g_swapChain->Present(1, 0);
-}
-
-// 插件卸载时清理资源
-void CleanupSwapChain() {
-	if (g_swapChain) {
-		g_swapChain->Release();
-		g_swapChain = nullptr;
-	}
-	if (g_dxgiFactory) {
-		g_dxgiFactory->Release();
-		g_dxgiFactory = nullptr;
-	}
-	if (g_rtvHeap) {
-		g_rtvHeap->Release();
-		g_rtvHeap = nullptr;
-	}
-	if (g_backBuffer) {
-		g_backBuffer->Release();
-		g_backBuffer = nullptr;
-	}
-}
-
-// 插件生命周期管理
-extern "C" __declspec(dllexport) void CALLBACK reshade_init()
-{
-	InitializeSwapChain();
-}
-
-extern "C" __declspec(dllexport) void CALLBACK reshade_render()
-{
-	RenderToSwapChain();
-}
-
-extern "C" __declspec(dllexport) void CALLBACK reshade_cleanup()
-{
-	CleanupSwapChain();
-}
-
-*/
 
 int create_swapchain(HWND hwnd);
 
@@ -381,7 +276,7 @@ void register_swapchain_to_reshade()
 	}
 }
 
-static void on_present(reshade::api::command_queue *, reshade::api::swapchain *swapChain, const reshade::api::rect *, const reshade::api::rect *, uint32_t, const reshade::api::rect *)
+static void on_present(reshade::api::command_queue *queue, reshade::api::swapchain *swapChain, const reshade::api::rect *, const reshade::api::rect *, uint32_t, const reshade::api::rect *)
 {
 	ID3D12Device *device = nullptr;
 	reshade::api::device *dev = nullptr;
@@ -414,7 +309,16 @@ static void on_present(reshade::api::command_queue *, reshade::api::swapchain *s
 	}
 
 
+	reshade::api::command_list *cmd_list = queue->get_immediate_command_list();
+	const reshade::api::resource back_buffer = swapChain->get_current_back_buffer();
+
+	cmd_list->barrier(back_buffer, reshade::api::resource_usage::present, reshade::api::resource_usage::shader_resource_pixel| reshade::api::resource_usage::shader_resource);
+
+	queue->wait_idle();
+
 	devData.dx12Present.on_present(swapChain->get_current_back_buffer_index());
+
+	cmd_list->barrier(back_buffer, reshade::api::resource_usage::shader_resource_pixel | reshade::api::resource_usage::shader_resource, reshade::api::resource_usage::present);
 
 	//uint32_t index = swapChain->get_current_back_buffer_index();
 

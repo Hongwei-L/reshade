@@ -8,6 +8,9 @@
 #include <d3dcommon.h>
 //#include <D3dx12.h>
 
+#include <atlcoll.h>		//for atl array
+
+
 #include "RenderCommon.h"
 
 #include <tchar.h>
@@ -87,6 +90,8 @@ private:
 	//我们需要把游戏Framebuffer作为纹理使用，需要描述符堆
 	ComPtr<ID3D12DescriptorHeap>				pIDH_GameSRVHeap;
 
+	ComPtr<ID3D12Resource>				pIAGameSRV[2*MAX_BACKBUF_COUNT];
+
 	ComPtr<ID3D12PipelineState>			pIPSO_Quad;	//PSO	
 
 	D3D12_VIEWPORT						stViewPort;// = { 0.0f, 0.0f, static_cast<float>(DBW_width), static_cast<float>(DBW_Height), D3D12_MIN_DEPTH, D3D12_MAX_DEPTH };
@@ -96,11 +101,18 @@ private:
 	D3D12_VERTEX_BUFFER_VIEW			stVBView = {};
 	UINT								nQuadVertexCnt = 0;
 
+	ComPtr<ID3D12Fence>					pIFence;
+	UINT64								n64FenceValue = 1ui64;
+	HANDLE								hEventFence = nullptr;
+
+
 
 	int	nRTVDescriptorSize;
 	int nSRVDescriptorSize;
 	int nSampleDescriptorSize;
 
+
+	CAtlArray<ID3D12CommandList *> arCmdList;
 public:
 
 	Dx12Present() = default;

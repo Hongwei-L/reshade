@@ -15,7 +15,7 @@
 #pragma comment(lib, "dxguid.lib")
 #pragma comment(lib, "d3d12.lib")
 
-const float							f4RTTexClearColor[] = { 0.8f, 0.8f, 0.8f, 0.0f };
+const float							f4RTTexClearColor[] = { 0.8f, 0.0f, 0.0f, 0.0f };
 
 class CGRSCOMException
 {
@@ -425,6 +425,21 @@ bool Dx12Present::init_resource(ID3D12Device*	pID3D12Device4,HWND hWnd)
 			, IID_PPV_ARGS(&pIPSO_Quad)));
 	}
 
+
+	THROW_IF_FAILED(pID3D12Device4->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&pIFence)));
+
+	//创建一个Event同步对象，用于等待围栏事件通知
+	hEventFence = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+	if (hEventFence == nullptr)
+	{
+		THROW_IF_FAILED(HRESULT_FROM_WIN32(GetLastError()));
+	}
+
+
+	//我们需要先关闭cmdlist? 
+	hResult = pICmdList->Close();
+
+
 	return true;
 }
 
@@ -435,12 +450,40 @@ bool Dx12Present::on_present(int frameindex)
 
 	UINT64 n64fence = 0;
 
-	hResult = pICmdList->Close();
+	D3D12_RESOURCE_BARRIER stRTVStateTransBarrier = {};
+
+
+	n64fence = n64FenceValue;
+	THROW_IF_FAILED(pIMainCmdQueue->Signal(pIFence.Get(), n64fence));
+	n64FenceValue++;
+
+	if (pIFence->GetCompletedValue() < n64fence)
+	{
+		THROW_IF_FAILED(pIFence->SetEventOnCompletion(n64fence, hEventFence));
+		WaitForSingleObject(hEventFence, INFINITE);
+	}
+
+
+
 	hResult = pICmdAlloc->Reset();
 	THROW_IF_FAILED(pICmdList->Reset(pICmdAlloc.Get(), pIPSO_Quad.Get()));
 
+
+	stRTVStateTransBarrier.Transition.pResource = pIAGameSRV[frameindex].Get();
+	stRTVStateTransBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+	stRTVStateTransBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;// D3D12_RESOURCE_STATE_PRESENT;
+	//pICmdList->ResourceBarrier(1, &stRTVStateTransBarrier);
+
+
 	//
 	//Framebuffer --> Quad
+
+
+	stRTVStateTransBarrier.Transition.pResource = pIARenderTargets[frameindex].Get();
+	stRTVStateTransBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+	stRTVStateTransBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+	pICmdList->ResourceBarrier(1, &stRTVStateTransBarrier);
+
 
 
 	//设置RTV和DSV
@@ -491,19 +534,26 @@ bool Dx12Present::on_present(int frameindex)
 	pICmdList->IASetVertexBuffers(0, 1, &stVBView);
 	//Draw Call！！！
 	pICmdList->DrawInstanced(nQuadVertexCnt, 1, 0, 0);
-
-	D3D12_RESOURCE_BARRIER stRTVStateTransBarrier = {};
+	
 
 	stRTVStateTransBarrier.Transition.pResource = pIARenderTargets[frameindex].Get();
 	stRTVStateTransBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 	stRTVStateTransBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
 	pICmdList->ResourceBarrier(1, &stRTVStateTransBarrier);
 
+
+	stRTVStateTransBarrier.Transition.pResource = pIAGameSRV[frameindex].Get();
+	stRTVStateTransBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, 
+	stRTVStateTransBarrier.Transition.StateAfter =  D3D12_RESOURCE_STATE_PRESENT;
+	//pICmdList->ResourceBarrier(1, &stRTVStateTransBarrier);
+
+
 	//关闭命令列表，去执行
 	THROW_IF_FAILED(pICmdList->Close());
 
-	ID3D12CommandList *ppCommandLists[] = { pICmdList.Get() };
-	pIMainCmdQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
+	arCmdList.RemoveAll();
+	arCmdList.Add(pICmdList.Get());
+	pIMainCmdQueue->ExecuteCommandLists(static_cast<UINT>(arCmdList.GetCount()), arCmdList.GetData());
 
 	THROW_IF_FAILED(pISwapChain3->Present(1, 0));
 
@@ -537,6 +587,8 @@ void Dx12Present::CreateSRV_forGameRTV(ID3D12Device *pID3D12Device4, DXGI_FORMAT
 	{
 		pID3D12Device4->CreateShaderResourceView(pResource[i], &stSRVDesc, stSRVHandle);
 		stSRVHandle.ptr += nSRVDescriptorSize;
+
+		pIAGameSRV[i] = pResource[i];
 	}
 
 }

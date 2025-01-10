@@ -17,7 +17,8 @@ PSInput VSMain(float4 v4Position : POSITION, float4 v4Color : COLOR, float2 v2UV
 {
     PSInput result;
 
-    result.m_v4Position = mul(v4Position, m_MVO);
+    //result.m_v4Position = mul(v4Position, m_MVO);
+	result.m_v4Position = v4Position;
     result.m_v4Color = v4Color;
     result.m_v2UV = v2UV;
 
